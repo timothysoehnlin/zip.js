@@ -1,0 +1,19 @@
+{
+  "name": "zip.js",
+  "version": "1.0.0",
+  "description": "zip.js is an open-source library (BSD license) for zipping and unzipping files.",
+  "main": "WebContent/zip.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/timothysoehnlin/zip.js.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/timothysoehnlin/zip.js/issues"
+  },
+  "homepage": "https://github.com/timothysoehnlin/zip.js"
+}
