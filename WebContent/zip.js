@@ -452,7 +452,7 @@ var Zip = (function() {
 
 	function inflate(worker, sn, reader, writer, offset, size, computeCrc32, onend, onprogress, onreaderror, onwriteerror) {
 		var crcType = computeCrc32 ? 'output' : 'none';
-		if (obj.zip.useWebWorkers) {
+		if (obj.useWebWorkers) {
 			var initialMessage = {
 				sn: sn,
 				codecClass: 'Inflater',
@@ -460,12 +460,12 @@ var Zip = (function() {
 			};
 			launchWorkerProcess(worker, initialMessage, reader, writer, offset, size, onprogress, onend, onreaderror, onwriteerror);
 		} else
-			launchProcess(new obj.zip.Inflater(), reader, writer, offset, size, crcType, onprogress, onend, onreaderror, onwriteerror);
+			launchProcess(new obj.Inflater(), reader, writer, offset, size, crcType, onprogress, onend, onreaderror, onwriteerror);
 	}
 
 	function deflate(worker, sn, reader, writer, level, onend, onprogress, onreaderror, onwriteerror) {
 		var crcType = 'input';
-		if (obj.zip.useWebWorkers) {
+		if (obj.useWebWorkers) {
 			var initialMessage = {
 				sn: sn,
 				options: {level: level},
@@ -474,12 +474,12 @@ var Zip = (function() {
 			};
 			launchWorkerProcess(worker, initialMessage, reader, writer, 0, reader.size, onprogress, onend, onreaderror, onwriteerror);
 		} else
-			launchProcess(new obj.zip.Deflater(), reader, writer, 0, reader.size, crcType, onprogress, onend, onreaderror, onwriteerror);
+			launchProcess(new obj.Deflater(), reader, writer, 0, reader.size, crcType, onprogress, onend, onreaderror, onwriteerror);
 	}
 
 	function copy(worker, sn, reader, writer, offset, size, computeCrc32, onend, onprogress, onreaderror, onwriteerror) {
 		var crcType = 'input';
-		if (obj.zip.useWebWorkers && computeCrc32) {
+		if (obj.useWebWorkers && computeCrc32) {
 			var initialMessage = {
 				sn: sn,
 				codecClass: 'NOOP',
@@ -691,7 +691,7 @@ var Zip = (function() {
 			_worker: null
 		};
 
-		if (!obj.zip.useWebWorkers)
+		if (!obj.useWebWorkers)
 			callback(zipReader);
 		else {
 			createWorker('inflater',
@@ -847,7 +847,7 @@ var Zip = (function() {
 			_worker: null
 		};
 
-		if (!obj.zip.useWebWorkers)
+		if (!obj.useWebWorkers)
 			callback(zipWriter);
 		else {
 			createWorker('deflater',
@@ -875,13 +875,13 @@ var Zip = (function() {
 		inflater: ['z-worker.js', 'inflate.js']
 	};
 	function createWorker(type, callback, onerror) {
-		if (obj.zip.workerScripts !== null && obj.zip.workerScriptsPath !== null) {
+		if (obj.workerScripts !== null && obj.workerScriptsPath !== null) {
 			onerror(new Error('Either zip.workerScripts or zip.workerScriptsPath may be set, not both.'));
 			return;
 		}
 		var scripts;
-		if (obj.zip.workerScripts) {
-			scripts = obj.zip.workerScripts[type];
+		if (obj.workerScripts) {
+			scripts = obj.workerScripts[type];
 			if (!Array.isArray(scripts)) {
 				onerror(new Error('zip.workerScripts.' + type + ' is not an array!'));
 				return;
@@ -889,7 +889,7 @@ var Zip = (function() {
 			scripts = resolveURLs(scripts);
 		} else {
 			scripts = DEFAULT_WORKER_SCRIPTS[type].slice(0);
-			scripts[0] = (obj.zip.workerScriptsPath || '') + scripts[0];
+			scripts[0] = (obj.workerScriptsPath || '') + scripts[0];
 		}
 		var worker = new Worker(scripts[0]);
 		// record total consumed time by inflater/deflater/crc32 in this worker
@@ -920,13 +920,196 @@ var Zip = (function() {
 	function onerror_default(error) {
 		console.error(error);
 	}
-	obj.zip = {
+
+	var ERR_HTTP_RANGE = "HTTP Range not supported.";
+	
+	var ZipDirectoryEntry;
+
+	var appendABViewSupported;
+	try {
+		appendABViewSupported = new Blob([ new DataView(new ArrayBuffer(0)) ]).size === 0;
+	} catch (e) {
+	}
+
+	function HttpReader(url) {
+		var that = this;
+
+		function getData(callback, onerror) {
+			var request;
+			if (!that.data) {
+				request = new XMLHttpRequest();
+				request.addEventListener("load", function() {
+					if (!that.size)
+						that.size = Number(request.getResponseHeader("Content-Length"));
+					that.data = new Uint8Array(request.response);
+					callback();
+				}, false);
+				request.addEventListener("error", onerror, false);
+				request.open("GET", url);
+				request.responseType = "arraybuffer";
+				request.send();
+			} else
+				callback();
+		}
+
+		function init(callback, onerror) {
+			var request = new XMLHttpRequest();
+			request.addEventListener("load", function() {
+				that.size = Number(request.getResponseHeader("Content-Length"));
+				callback();
+			}, false);
+			request.addEventListener("error", onerror, false);
+			request.open("HEAD", url);
+			request.send();
+		}
+
+		function readUint8Array(index, length, callback, onerror) {
+			getData(function() {
+				callback(new Uint8Array(that.data.subarray(index, index + length)));
+			}, onerror);
+		}
+
+		that.size = 0;
+		that.init = init;
+		that.readUint8Array = readUint8Array;
+	}
+	HttpReader.prototype = new Reader();
+	HttpReader.prototype.constructor = HttpReader;
+
+	function HttpRangeReader(url) {
+		var that = this;
+
+		function init(callback, onerror) {
+			var request = new XMLHttpRequest();
+			request.addEventListener("load", function() {
+				that.size = Number(request.getResponseHeader("Content-Length"));
+				if (request.getResponseHeader("Accept-Ranges") == "bytes")
+					callback();
+				else
+					onerror(ERR_HTTP_RANGE);
+			}, false);
+			request.addEventListener("error", onerror, false);
+			request.open("HEAD", url);
+			request.send();
+		}
+
+		function readArrayBuffer(index, length, callback, onerror) {
+			var request = new XMLHttpRequest();
+			request.open("GET", url);
+			request.responseType = "arraybuffer";
+			request.setRequestHeader("Range", "bytes=" + index + "-" + (index + length - 1));
+			request.addEventListener("load", function() {
+				callback(request.response);
+			}, false);
+			request.addEventListener("error", onerror, false);
+			request.send();
+		}
+
+		function readUint8Array(index, length, callback, onerror) {
+			readArrayBuffer(index, length, function(arraybuffer) {
+				callback(new Uint8Array(arraybuffer));
+			}, onerror);
+		}
+
+		that.size = 0;
+		that.init = init;
+		that.readUint8Array = readUint8Array;
+	}
+	HttpRangeReader.prototype = new Reader();
+	HttpRangeReader.prototype.constructor = HttpRangeReader;
+
+	function ArrayBufferReader(arrayBuffer) {
+		var that = this;
+
+		function init(callback, onerror) {
+			that.size = arrayBuffer.byteLength;
+			callback();
+		}
+
+		function readUint8Array(index, length, callback, onerror) {
+			callback(new Uint8Array(arrayBuffer.slice(index, index + length)));
+		}
+
+		that.size = 0;
+		that.init = init;
+		that.readUint8Array = readUint8Array;
+	}
+	ArrayBufferReader.prototype = new Reader();
+	ArrayBufferReader.prototype.constructor = ArrayBufferReader;
+
+	function ArrayBufferWriter() {
+		var array, that = this;
+
+		function init(callback, onerror) {
+			array = new Uint8Array();
+			callback();
+		}
+
+		function writeUint8Array(arr, callback, onerror) {
+			var tmpArray = new Uint8Array(array.length + arr.length);
+			tmpArray.set(array);
+			tmpArray.set(arr, array.length);
+			array = tmpArray;
+			callback();
+		}
+
+		function getData(callback) {
+			callback(array.buffer);
+		}
+
+		that.init = init;
+		that.writeUint8Array = writeUint8Array;
+		that.getData = getData;
+	}
+	ArrayBufferWriter.prototype = new Writer();
+	ArrayBufferWriter.prototype.constructor = ArrayBufferWriter;
+
+	function FileWriter(fileEntry, contentType) {
+		var writer, that = this;
+
+		function init(callback, onerror) {
+			fileEntry.createWriter(function(fileWriter) {
+				writer = fileWriter;
+				callback();
+			}, onerror);
+		}
+
+		function writeUint8Array(array, callback, onerror) {
+			var blob = new Blob([ appendABViewSupported ? array : array.buffer ], {
+				type : contentType
+			});
+			writer.onwrite = function() {
+				writer.onwrite = null;
+				callback();
+			};
+			writer.onerror = onerror;
+			writer.write(blob);
+		}
+
+		function getData(callback) {
+			fileEntry.file(callback);
+		}
+
+		that.init = init;
+		that.writeUint8Array = writeUint8Array;
+		that.getData = getData;
+	}
+	FileWriter.prototype = new Writer();
+	FileWriter.prototype.constructor = FileWriter;
+
+	
+	obj = {
 		Reader : Reader,
 		Writer : Writer,
 		BlobReader : BlobReader,
 		Data64URIReader : Data64URIReader,
 		TextReader : TextReader,
 		BlobWriter : BlobWriter,
+		FileWriter : FileWriter,
+		HttpReader : HttpReader,
+		HttpRangeReader : HttpRangeReader,
+		ArrayBufferReader : ArrayBufferReader,
+		ArrayBufferWriter : ArrayBufferWriter,
 		Data64URIWriter : Data64URIWriter,
 		TextWriter : TextWriter,
 		createReader : function(reader, callback, onerror) {
@@ -963,5 +1146,6 @@ var Zip = (function() {
 		 */
 		workerScripts : null,
 	};
+	
 	return obj;
 })();
