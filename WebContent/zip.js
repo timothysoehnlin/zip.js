@@ -26,8 +26,9 @@
  EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-(function(obj) {
+var Zip = (function() {
 	"use strict";
+	var obj = {};
 
 	var ERR_BAD_FORMAT = "File format is not recognized.";
 	var ERR_CRC = "CRC failed.";
@@ -962,5 +963,5 @@
 		 */
 		workerScripts : null,
 	};
-
-})(this);
+	return obj;
+})();
